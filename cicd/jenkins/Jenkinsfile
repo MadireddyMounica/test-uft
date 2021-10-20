@@ -299,7 +299,7 @@ pipeline {
                     }
                     steps {
                         println "jslEmailNotification"
-                        //jslEmailNotification('manishkumar.christian@lumen.com', 'manishkumar.christian@lumen.com', 'Job Name:${JOB_NAME} BuildNo:${BUILD_NUMBER}', 'run_results.html', '''${FILE,path="Jenkins_UFT_TestScript/run_results.html"} Build Url : ${BUILD_URL}''', 'text/html')
+                        //jslEmailNotification('mounica.madireddy@lumen.com', 'mounica.madireddy@lumen.com', 'Job Name:${JOB_NAME} BuildNo:${BUILD_NUMBER}', 'run_results.html', '''${FILE,path="Jenkins_UFT_TestScript/run_results.html"} Build Url : ${BUILD_URL}''', 'text/html')
                     }
                 }
 
