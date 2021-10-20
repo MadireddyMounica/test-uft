@@ -1,0 +1,609 @@
+/*
+ Library declaration.
+  Notes:
+  identifier includes the version of the library (git tag / branch)
+  remote includes the repository git url
+  credentialsId needs to be of the type SSH key in Jenkins
+  _ at the end of the declaration loads the whole library
+
+  This section always runs in the master jenkins.
+*/
+try {
+    library(
+        identifier: 'jsl-jenkins-shared-library@maturityreport',
+        retriever: modernSCM(
+            [
+                $class: 'GitSCMSource',
+                remote: 'https://github.com/manish-christian/jsl-jenkins-shared-library.git',
+                credentialsId: 'SCMAUTO_GITHUB',
+                //"/app/jenkins/git/jsl-jenkins-shared-library.git",
+                extensions: [[$class: 'WipeWorkspace']]
+            ]
+        )
+    ) _
+} catch (Exception Ex) {
+    library(
+        identifier: 'jsl-jenkins-shared-library@release/20210415',
+        retriever: modernSCM(
+            [
+                $class: 'GitSCMSource',
+                remote: "git@github.com:CenturyLink/jsl-jenkins-shared-library.git",
+                credentialsId: 'SCMAUTO_SSH_DEVOPS_PIPELINE',
+                extensions: [[$class: 'WipeWorkspace']]
+            ]
+        )
+    ) _
+}
+pipeline {
+
+    environment {
+
+        //  Credentials:
+        //  GITHUB_TOKEN_CREDENTIALS github token, jenkins user password credential. SCMAUTO_GITHUB contains the GitHub token from SCMAuto user, which need to have access to the repository.
+        //  GITHUB_SSH_CREDENTIALS github ssh private key, jenkins private key credential. SCMAUTO_SSH_DEVOPS_PIPELINE contains the SSH key from SCMAuto user, which need to have access to the repository.
+        //  DOCKER_CREDENTIALS Docker access info, jenkins secret file credential with environment variables to export.
+        //  KUBE_CREDENTIALS Kubernetes access info, jenkins secret file credential with environment variables to export. For PRs.
+        //  KUBE_CREDENTIALS_TEST Kubernetes access info, jenkins secret file credential with environment variables to export. For branches.
+        //  AMAZON_CREDENTIALS AWS access info, jenkins secret file credential with environment variables to export
+        //  SONARQUBE_CREDENTIALS Sonarqube access info, jenkins secret text
+        //  GCP_CREDENTIALS GCP access info, jenkins secret file credential with environment variables to export
+        //  JIRA_CREDENTIALS Jira access info, jenkins secret file credential with environment variables to export
+        //  MORPHEUS_CREDENTIALS Morpheus access info, jenkins secret text
+        //  MSTEAMS_CREDENTIALS MS Teams access info, jenkins secret text
+        //  QUALITY_GATE_CREDENTIALS Credentials to gather all the contract validation gates expected to be crossed.
+        //  PROJECT_MAL The MAL of the project
+
+        GITHUB_TOKEN_CREDENTIALS = 'GITHUB_APP_CREDENTIALS'   //'SCMAUTO_GITHUB'
+        GITHUB_SSH_CREDENTIALS = 'SCMAUTO_SSH_DEVOPS_PIPELINE'
+        DOCKER_CREDENTIALS = 'nexus-secrets-autotest'
+        KUBE_CREDENTIALS = 'kube-secret-dev'
+        KUBE_CREDENTIALS_TEST = 'kube-secret-test'
+        KUBE_CREDENTIALS_PROD = ''
+        AMAZON_CREDENTIALS = ''
+        SONARQUBE_CREDENTIALS = 'sonarscnprod'
+        GCP_CREDENTIALS = ''
+        JIRA_SERVER_INSTANCE_ID = 'CLOUD-482e318d-9fc6-4be6-9089-2646e78fcac3'
+        JIRA_CREDENTIALS = 'jira-credentials'
+        XRAY_CREDENTIALS = 'xray-credentials'
+        MORPHEUS_CREDENTIALS = ''
+        MSTEAMS_CREDENTIALS = 'teams-secret'
+        QUALITY_GATE_CREDENTIALS = 'qualitygate-secret'
+
+        //Deployment control credentialsId
+        AUTHORIZED_USERS = 'authorized_users'
+        DEPLOY_AUTH_TOKEN = 'deploy_auth_token'
+
+        // Custom project variables
+        PROJECT_NAME = 'JARVIS'
+        PROJECT_MAL = "TESTAUTO"
+
+        //For destination images
+        DOCKER_REPO = 'testauto/tdd-fizzbuzz' //MAL-NAME/Repo-Name
+        IMAGE_NAME = "${env.PROJECT_NAME}"
+        IMAGE_TAG = "${env.PULL_REQUEST}"
+
+        BRANCH_NAME = GIT_BRANCH.split('/')[-1].trim().toLowerCase()
+        COMMIT_ID = GIT_COMMIT.substring(0, 7).trim().toLowerCase()
+        PULL_REQUEST = "pr-${env.CHANGE_ID}"
+        KUBE_DOCKER_SECRET_NAME = "${env.PROJECT_NAME}-${env.PULL_REQUEST}"
+        KUBE_DOCKER_SECRET_NAME_TEST = "${env.PROJECT_NAME}-${env.BRANCH_NAME}"
+        KUBE_DOCKER_SECRET_NAME_PROD = "${env.PROJECT_NAME}-${env.BRANCH_NAME}"
+
+        //App Specific
+
+        //JARVIS specific
+        VM_NAME = ''
+        COSTOM_WORKSPACE = 'C:\\Automation\\APPLICATIONS\\UFT_Jenkins_TestingProject'
+    }
+
+
+    // Add parameters if needed or if deployment control is in place.
+    // parameters {
+    //      //https://www.jenkins.io/doc/book/pipeline/syntax/#parameters
+    //  text(name: 'GCR', defaultValue: '', description: 'Enter the GCR description. Only used in deployment to production stage.')
+    //  text(name: 'VERSION', defaultValue: '', description: 'Version to deploy. Only used in deployment to production stage.')
+    // }
+
+    parameters {
+        choice(choices: ['TEST1', 'TEST2', 'TEST4'], description: '', name: 'Environment')
+        string(defaultValue: 'TEST', description: '', name: 'MAL', trim: false)
+        string(defaultValue: 'JARVIS', description: '', name: 'TestTool', trim: false)
+        choice(choices: ['Sanity', 'Regression'], description: '', name: 'TestType')
+        string(defaultValue: 'XIS', description: '', name: 'Project', trim: false)
+        string(defaultValue: 'XIS-4239', description: '', name: 'TestPlan', trim: false)
+        string(defaultValue: 'Test1', description: '', name: 'XrayEnvironment', trim: false)
+        choice(choices: ['XVMXDODCTST040', 'XVMXDODCTST041'], description: '', name: 'AgentName')
+    }
+
+    // https://www.jenkins.io/doc/book/pipeline/syntax/#agent
+    //Add agent sections in stages/stage if needed.
+
+    agent {
+        //label 'Docker-enabled'
+        //label 'TEST_UFT_NODE'
+        //label "${params.AgentName}"
+        label 'JenkWin'
+    }
+
+    options {
+
+        // https://www.jenkins.io/doc/book/pipeline/syntax/#options
+
+        timestamps()
+        timeout(time: 1, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '10', daysToKeepStr: '30'))
+        preserveStashes(buildCount: 10)
+        disableConcurrentBuilds()
+    }
+
+
+    // https://www.jenkins.io/doc/book/pipeline/syntax/#triggers
+
+    triggers {
+        issueCommentTrigger('.*test this please.*')
+    }
+
+    stages {
+        /* stage('Authorize - Prod only') {
+            // when {
+            //   //https://www.jenkins.io/doc/book/pipeline/syntax/#when
+            //   //Use it to decide when this stage runs to select the pipeline flow
+            // } 
+            steps {
+                script {
+                    jslDeploymentControlKnob()
+                }
+            }
+        } */
+
+        /* stage('Static Code Analysis') {
+            // when {
+            //   //https://www.jenkins.io/doc/book/pipeline/syntax/#when
+            //   //Use it to decide when this stage runs to select the pipeline flow
+            // } 
+            parallel {
+                stage('Linting') {
+                    agent {
+                        dockerfile {
+                            // Insert your code here  
+                        }
+                    }
+                    steps {
+                        script{
+                            // Insert your code here  
+                        }
+                    }
+                }
+                stage('DevSecOps'){
+                    steps {
+                        script {
+                            // Contract validation gate
+                            jslGitHubSecurityAlert()
+                        }
+                    }
+                }
+            }
+        } */
+
+        /* stage('Build') {
+            // when {
+            //   //https://www.jenkins.io/doc/book/pipeline/syntax/#when
+            //   //Use it to decide when this stage runs to select the pipeline flow
+            // } 
+            agent {
+                dockerfile {
+                    // Insert your code here  
+                }
+            }
+            steps {
+                script {
+                    // Insert your code here  
+                }
+            }
+        } */
+
+        /* stage('Create Images') {
+            // when {
+            //   //https://www.jenkins.io/doc/book/pipeline/syntax/#when
+            //   //Use it to decide when this stage runs to select the pipeline flow
+            // } 
+            steps {
+                script {
+                    // Insert your code here  
+                }
+            }
+        } */
+
+        /* stage('Test') {
+            // when {
+            //   //https://www.jenkins.io/doc/book/pipeline/syntax/#when
+            //   //Use it to decide when this stage runs to select the pipeline flow
+            // } 
+            stages {
+                stage('Unit Tests') {
+                    agent {
+                        dockerfile {
+                            // Insert your code here  
+                        }
+                    }
+                    steps {
+                        script {
+                            // Insert your code here  
+                            // Contract validation gate
+                            // call jslPublishTestResults()
+                            // or 
+                            // call jslPublishHTMLTestResults()
+                            // Insert your code here  
+
+                        }
+                    }
+                }
+                stage('Coverage'){
+                    steps {
+                        script {
+                            // Insert your code here  
+                            // Contract validation gate
+                            jslQualityGateCodeCoverage('./cicd/conf/sonarqube/sonar-project.properties')
+                        }
+                    }
+                }
+                stage('Sonarqube'){
+                    agent {
+                        dockerfile {
+                            filename 'Dockerfile'
+                            dir 'cicd/docker/sonarqube'
+                            label 'Docker-enabled'
+                        }
+                    }
+                    steps {
+                        script {
+                            // Insert your code here  
+                            // Contract validation gate
+                            jslSonarQubeStaticAnalysis('./cicd/conf/sonarqube/sonar-project.properties')
+                        }
+                    }
+                }
+                stage('Quality Gate'){
+                    agent {
+                        dockerfile {
+                            filename 'Dockerfile'
+                            dir 'cicd/docker/sonarqube'
+                            label 'Docker-enabled'
+                        }
+                    }
+                    steps {
+                        script {
+                            // Contract validation gate
+                            jslQualityGate()
+                        }
+                    }
+                }
+            }
+        } */
+
+        /* stage('Deploy') {
+            // when {
+            //   //https://www.jenkins.io/doc/book/pipeline/syntax/#when
+            //   //Use it to decide when this stage runs to select the pipeline flow
+            // } 
+            steps {
+                script {
+                    // Insert your code here  
+                }
+            }
+        } */
+
+        stage('Quality Gate 2') {
+            agent {
+                node {
+                    label 'TEST_UFT_NODE'
+                    //label "${params.AgentName}"
+                    customWorkspace "${COSTOM_WORKSPACE}"
+                }
+            }
+            stages {
+                stage('Sanity Tests') {
+                    /* agent {
+                        node {
+                            //label 'TEST_UFT_NODE'
+                            label "${params.AgentName}"
+                            customWorkspace "${COSTOM_WORKSPACE}"
+                        }
+                    } */
+                    steps {
+                        script {
+                            //VM_NAME = "${NODE_NAME}"
+                            //uftScenarioLoad archiveTestResultsMode: 'ALWAYS_ARCHIVE_TEST_REPORT',
+                            //testPaths: "${COSTOM_WORKSPACE}\\Jenkins_UFT_TestScript"
+                            //stash name: "RESULT", includes: "JIRA_Tests_JSON.json"
+                            sh 'mkdir -p qareports && cp JIRA_Tests_JSON.json qareports/JIRA_Tests_JSON.json'
+		                          stash name: 'qareports' , includes: 'qareports/**'
+                        }
+                    }
+                }
+
+                /* stage('Functional Tests') {
+                    // when {
+                    //   //Use it for Functional tests
+                    // }
+                    agent {
+                        // Insert your agent info here
+                    } 
+                    steps {
+                        script {
+                            // Insert your code here
+                            // Stash the result for Quality Gate 3
+                        }
+                    }
+                } */
+
+                /* stage('Regression Tests') {
+                    // when {
+                    //   //Use it for Regression tests
+                    // }
+                    agent {
+                        // Insert your agent info here
+                    } 
+                    steps {
+                        script {
+                            // Insert your code here
+                            // Stash the result for Quality Gate 3
+                        }
+                    }
+                } */
+
+                stage('Jira Integration') {
+                    /* agent {
+                        node {
+                            //label 'TEST_UFT_NODE'
+                            label "${params.AgentName}"
+                            customWorkspace "${COSTOM_WORKSPACE}"
+                        }
+                    } */
+                    steps {
+                        println "jslJiraXrayResultImport"
+                        //jslJiraXrayResultImport('xray', 'JIRA_Tests_JSON.json', 'This execution is automatically created when importing execution results from jenkins', '${TestTool}', '${Project}', '${TestPlan}', '${XrayEnvironment}')
+                    }
+                }
+
+                stage('Tests Result Email Notification') {
+                    /* agent {
+                        node {
+                            //label 'TEST_UFT_NODE'
+                            label "${params.AgentName}"
+                            customWorkspace "${COSTOM_WORKSPACE}"
+                        }
+                    } */
+                    steps {
+                        println "jslEmailNotification"
+                        //jslEmailNotification('manishkumar.christian@lumen.com', 'manishkumar.christian@lumen.com', 'Job Name:${JOB_NAME} BuildNo:${BUILD_NUMBER}', 'run_results.html', '''${FILE,path="Jenkins_UFT_TestScript/run_results.html"} Build Url : ${BUILD_URL}''', 'text/html')
+                    }
+                }
+
+                stage('Quality Gate'){
+                    agent {
+                        dockerfile {
+                            filename 'Dockerfile'
+                            dir 'cicd/docker/qualitygate'
+                            label 'Docker-enabled'
+                        }
+                    }
+                    steps {
+                        script {
+                            unstash 'qareports'
+                            jslCheckQualityGates('qareports/JIRA_Tests_JSON.json', 'QualityGate2-Sanity', 'JSON')
+                        }
+                    }
+                }
+            }
+        }
+
+        /* stage('Quality Gate 3') {
+            stages {
+                stage('Integration Tests') {
+                    // when {
+                    //   //Use it for Integration tests
+                    // }
+                    agent {
+                        node {
+                            label 'TEST_UFT_NODE'
+                            //label "${params.AgentName}"
+                            customWorkspace "${COSTOM_WORKSPACE}"
+                        }
+                    }
+                    steps {
+                        script {
+                            // Insert your code here
+                            // Stash the result for Quality Gate 3
+                        }
+                    }
+                }
+
+                stage('Quality Gate') {
+                    // when {
+                    //   //Use it for Guality Gate 3 after Integration tests
+                    // }
+                    agent{
+                        dockerfile {
+                            filename 'Dockerfile'
+                            dir 'cicd/docker/qualitygate'
+                            label 'Docker-enabled'
+                        }
+                    }
+                    steps {
+                        script {
+                            unstash 'Result from Integration Tests stage'
+                            jslCheckQGateForJARVISXrayJSON('Result file name', 'qualitygate3', 'Result type: JUnit/JSON')
+                        }
+
+                    }
+                }
+            }
+        } */
+
+        /* stage('Quality Gate 4') {
+            stages {
+                stage('Solution/E2E Tests') {
+                    // when {
+                    //   //Use it for Solution/E2E tests (Feature validation)
+                    // }
+                    agent {
+                        // Insert your agent info here
+                    } 
+                    steps {
+                        script {
+                            // Insert your code here
+                            // Stash the result for Quality Gate 4
+                        }
+                    }
+                }
+
+                stage('Quality Gate'){
+                    // when {
+                    //   //Use it for Guality Gate 4 after Solution/E2E tests
+                    // }
+                    agent{
+                        dockerfile {
+                            filename 'Dockerfile'
+                            dir 'cicd/docker/qualitygate'
+                            label 'Docker-enabled'
+                        }
+                    }
+                    steps {
+                        script {
+                            unstash 'Result from Solution/E2E Tests stage'
+                            jslCheckQGateForJARVISXrayJSON('Result file name', 'qualitygate4', 'Result type: JUnit/JSON')
+                        }
+                    }
+                }
+            }
+        } */
+
+        /* stage('Quality Gate 5') {
+            stages {
+                stage('User Acceptance Tests') {
+                    // when {
+                    //   //Use it for User Acceptance tests (End User validation)
+                    // }
+                    agent {
+                        // Insert your agent info here
+                    } 
+                    steps {
+                        script {
+                            // Insert your code here
+                            // Stash the result for Quality Gate 5
+                        }
+                    }
+                }
+
+                stage('Quality Gate'){
+                    // when {
+                    //   //Use it for Guality Gate 5 after User Acceptance tests
+                    // }
+                    agent{
+                        dockerfile {
+                            filename 'Dockerfile'
+                            dir 'cicd/docker/qualitygate'
+                            label 'Docker-enabled'
+                        }
+                    }
+                    steps {
+                        script {
+                            unstash 'Result from User Acceptance Tests stage'
+                            jslCheckQGateForJARVISXrayJSON('Result file name', 'qualitygate5', 'Result type: JUnit/JSON')
+                        }
+                    }
+                }
+            }
+        } */
+
+        /* stage('Quality Gate 6'){
+            // when {
+            //   //Use it for Production verification
+            // }
+            agent{
+                // Insert your agent info here
+            }
+            steps {
+                script {
+                    // jslJiraPullTestResults
+                }
+            }
+        } */
+
+        /* stage('Quality Gate 7') {
+            stages {
+                stage('Deploy to Prod - Prod only') {
+                    // when {
+                    //   //https://www.jenkins.io/doc/book/pipeline/syntax/#when
+                    //   //Use it to decide when this stage runs to select the pipeline flow
+                    // } 
+                    steps {
+                        script {
+                            // Insert your code here  
+                        }
+                    }
+                }
+
+                stage('Quality Gate'){
+                    // when {
+                    //   //Use it for Guality Gate 7 after Production Sanity tests
+                    // }
+                    agent{
+                        // Insert your agent info here
+                    }
+                    steps {
+                        script {
+                            // jslJiraPullTestResults
+                        }
+                    }
+                }
+            }
+        } */
+
+        stage('Adoption Stats') {
+            agent {
+                dockerfile {
+                    filename 'Dockerfile'
+                    dir 'cicd/docker/JiraAdoption/'
+                    label 'Docker-enabled'
+                }
+            }
+            steps {
+                script {
+                    unstash name: "JSL_QA_REPORT_STASH"
+                    jslAdoptionMain('jsl_qa_report_stash/*.json')
+                    // Insert your code here  
+                    // Contract validation gate
+                    // call the function with a single filename / wildcard expresion
+                    // containing all the tests reports produced
+                    // jslAdoptionMain('')
+                }
+            }
+        }
+    }
+    post {
+        /*
+        https://www.jenkins.io/doc/book/pipeline/syntax/#post
+  
+        Always post somewhere the watermark:
+          - md5sum of Jenkinsfile
+          - Output of the Jenkinsfile checker output
+        */
+        success {
+            jslNotification('success')
+            cleanWs()
+        }
+        failure {
+            jslNotification('failure')
+            cleanWs()
+        }
+        unstable {
+            jslNotification('unstable')
+            cleanWs()
+        }
+        /* always {
+            cleanWs()
+        } */
+    }
+}

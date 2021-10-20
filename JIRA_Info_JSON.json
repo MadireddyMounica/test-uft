@@ -1,0 +1,22 @@
+{
+	"fields": {
+		"customfield_10088": "Jenkins Job Name: Jenkins Job Test\nJenkins Build Number: #20\nApplication Build Number: 1.11.111",
+		"description": "This execution is automatically created when importing execution results from Jenkins",
+		"fixVersions": [{
+				"name": "2.0.0.0"
+			}
+		],
+		"issuetype": {
+			"name": "Test Execution"
+		},
+		"labels": ["JARVIS"],
+		"project": {
+			"key": "XIS"
+		},
+		"summary": "AutomatedExecution_MAL_#20"
+	},
+	"xrayFields": {
+		"environments": ["Test1"],
+		"testPlanKey": "XIS-4239"
+	}
+}

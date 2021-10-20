@@ -1,0 +1,349 @@
+/*
+Library declaration.
+Notes:
+identifier includes the version of the library (git tag / branch)
+remote includes the repository git url
+credentialsId needs to be of the type SSH key in Jenkins
+_ at the end of the declaration loads the whole library
+This section always runs in the master jenkins.
+ */
+/*library(
+    identifier: 'jsl-jenkins-shared-library@master',
+    retriever: modernSCM(
+        [
+            $class: 'GitSCMSource',
+            remote: "git@github.com:manish-christian/jsl-jenkins-shared-library.git",
+            credentialsId: "SCMAUTO_SSH_DEVOPS_PIPELINE",
+            extensions: [[$class: 'WipeWorkspace']]// This will brute-force Workspace clean-up
+        ]))_
+*/
+try {
+	library(
+	    identifier: 'jsl-jenkins-shared-library@master',
+	    retriever: modernSCM(
+		     [
+		       $class: 'GitSCMSource',
+		       remote: "https://github.com/manish-christian/jsl-jenkins-shared-library.git", // (WAS) git@github.com:manish-christian/jsl-jenkins-shared-library.git,
+		       credentialsId: 'SCMAUTO_GITHUB',  // (IS) https://github.com/CenturyLink/jsl-jenkins-shared-library.git,
+		       extensions: [[$class: 'WipeWorkspace']]
+		     ]
+	    )
+	  ) _
+} catch (Exception ex) {
+	library(
+	    identifier: 'jsl-jenkins-shared-library@master',
+	    retriever: modernSCM(
+		     [
+		       $class: 'GitSCMSource',
+		       remote: "git@github.com:manish-christian/jsl-jenkins-shared-library.git",
+			// (WAS) "/app/jenkins/git/jsl-jenkins-shared-library.git", // (WAS) git@github.com:manish-christian/jsl-jenkins-shared-library.git,
+		       credentialsId: 'SCMAUTO_SSH_DEVOPS_PIPELINE',	//'SCMAUTO_SSH_DEVOPS_PIPELINE',//'manishchristian-ssh',
+		       extensions: [[$class: 'WipeWorkspace']]
+		     ]
+	    )
+	  ) _
+}
+
+pipeline {
+
+    environment {
+
+        /* Credentials:
+        GITHUB_TOKEN_CREDENTIALS github token, jenkins user password credential
+        GITHUB_SSH_CREDENTIALS github ssh private key, jenkins private key credential.
+        DOCKER_CREDENTIALS Docker access info, jenkins secret file credential with environment variables to export
+        KUBE_CREDENTIALS Kubernetes access info, jenkins secret file credential with environment variables to export. For PRs.
+        KUBE_CREDENTIALS_TEST Kubernetes access info, jenkins secret file credential with environment variables to export. For branches.
+        AMAZON_CREDENTIALS AWS access info, jenkins secret file credential with environment variables to export
+        SONARQUBE_CREDENTIALS Sonarqube access info, jenkins secret text
+        GCP_CREDENTIALS GCP access info, jenkins secret file credential with environment variables to export
+        JIRA_CREDENTIALS Jira access info, jenkins secret file credential with environment variables to export
+        MSTEAMS_CREDENTIALS MS Teams access info, jenkins secret text
+        */
+
+        GITHUB_TOKEN_CREDENTIALS = 'GITHUB_APP_CREDENTIALS'	//'SCMAUTO_GITHUB'
+        GITHUB_SSH_CREDENTIALS = 'SCMAUTO_SSH_DEVOPS_PIPELINE'
+        DOCKER_CREDENTIALS = 'nexus-secrets-autotest'
+        KUBE_CREDENTIALS = 'kube-secret-dev'
+        KUBE_CREDENTIALS_TEST = 'kube-secret-test'
+        SONARQUBE_CREDENTIALS = 'sonarscnprod'
+        QUALITY_GATE_CREDENTIALS = 'qualitygate-secret'
+        JIRA_CREDENTIALS = 'jira-credentials'
+        AMAZON_CREDENTIALS = ''
+        GCP_CREDENTIALS = ''
+        MSTEAMS_CREDENTIALS = 'teams-secret'
+        TAG = "${env.NODE_NAME}"
+
+        //Deployment control credentialsId
+        AUTHORIZED_USERS = 'authorized_users'
+        DEPLOY_AUTH_TOKEN = 'deploy_auth_token'
+
+        // Custom project variables
+        //BRANCH_NAME = GIT_BRANCH.split('/')[-1].trim().toLowerCase()
+        //COMMIT_ID = GIT_COMMIT.substring(0, 7).trim().toLowerCase()
+        PULL_REQUEST = "pr-${env.CHANGE_ID}"
+        PROJECT_NAME = 'tdd-fizzbuzz' //Should be Repo-name
+        PROJECT_MAL = "TESTAUTO"
+
+        //For destination images
+        DOCKER_REPO = 'testauto/tdd-fizzbuzz' //MAL-NAME/Repo-Name
+        IMAGE_NAME = "${env.PROJECT_NAME}"
+        IMAGE_TAG = "${env.PULL_REQUEST}"
+        /* KUBE_DOCKER_SECRET_NAME = "${env.PROJECT_NAME}-${env.PULL_REQUEST}"
+        KUBE_DOCKER_SECRET_NAME_TEST = "${env.PROJECT_NAME}-${env.BRANCH_NAME}"
+        KUBE_DOCKER_SECRET_NAME_PROD = "${env.PROJECT_NAME}-${env.BRANCH_NAME}" */
+
+        //App Specific
+
+        //JARVIS specific
+        VM_NAME = ''
+        COSTOM_WORKSPACE = 'C:\\Automation\\APPLICATIONS\\UFT_Jenkins_TestingProject'
+
+    }
+
+    parameters {
+        choice(choices: ['TEST1', 'TEST2', 'TEST4'], description: '', name: 'Environment')
+        string(defaultValue: 'TEST', description: '', name: 'MAL', trim: false)
+        string(defaultValue: 'JARVIS', description: '', name: 'TestTool', trim: false)
+        choice(choices: ['Sanity', 'Regression'], description: '', name: 'TestType')
+        choice(choices: ['XVMXDODCTST007', 'XVMXDODCTST008', 'XVMXDODCTST009', 'XVMXDODCTST012', 'XVMXDODCTST013'], description: '', name: 'AgentName')
+    }
+
+    agent {
+	    //label 'TEST_UFT_NODE'
+	    label {
+	    	label "${params.AgentName}"
+	    //customWorkspace 'C:\\Automation\\APPLICATIONS\\UFT_Jenkins_TestingProject'
+	    }
+    }
+    /*agent none*/
+
+    options {
+        /*
+        https://www.jenkins.io/doc/book/pipeline/syntax/#options
+         */
+        /* skipDefaultCheckout true */
+        timestamps()
+        timeout(time: 1, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '4', daysToKeepStr: '8'))
+        disableConcurrentBuilds()
+        preserveStashes(buildCount: 10) //newly added
+    }
+
+    /*
+    https://www.jenkins.io/doc/book/pipeline/syntax/#triggers
+     */
+    triggers {
+        issueCommentTrigger('.*test this please.*')
+    }
+
+    stages {
+
+        /* stage('Authorize - Prod only') {
+        when {
+        expression { BRANCH_NAME == ~ /(production)/ }
+        }
+        steps {
+        script {
+        jslDeploymentControlKnob()
+        }
+        }
+        } */
+
+        /* stage ('Initialize') {
+        steps {
+        sh '''
+        echo "which git"
+        echo "PATH = ${PATH}"
+        echo "M2_HOME = ${M2_HOME}"
+        '''
+        }
+        } */
+
+        /* stage('Building tests') {
+        agent {
+        dockerfile {
+        filename 'Dockerfile'
+        dir 'cicd/docker/selenium'
+        label 'Docker-enabled'
+        }
+        }
+
+        steps {
+        script {
+        println "Will test in ${params.MAL}"
+        println "Workspace is : ${env.WORKSPACE}"
+        jslMavenWrapper("-f TestProjTools/pom.xml clean install")
+        stash name: "TARGET", includes: "TestProjTools/target/*"
+
+        }
+        }
+        } */
+
+        /*stage('RunUFTTestFromFS') {
+            / *agent {
+            label "${params.AgentName}"
+            }* /
+            agent {
+                node {
+                    //label "${params.AgentName}"
+					label 'TEST_UFT_NODE'
+                    //customWorkspace 'C:\\Automation\\APPLICATIONS\\UFT_Jenkins_TestingProject'
+                    customWorkspace "${COSTOM_WORKSPACE}"
+                }
+            }
+
+            steps {
+                script {
+                    VM_NAME = "${NODE_NAME}"
+                    //COSTOM_WORKSPACE = "${WORKSPACE}"
+                }
+                uftScenarioLoad archiveTestResultsMode: 'ALWAYS_ARCHIVE_TEST_REPORT',
+                testPaths: "${COSTOM_WORKSPACE}\\Jenkins_UFT_TestScript"
+            }
+        }*/
+
+        /*stage('XRayResultImport') {
+            / *agent {
+            label "${params.AgentName}"
+            }* /
+            agent {
+                node {
+                    //label "${params.AgentName}"
+					label "${VM_NAME}"
+                    customWorkspace "${COSTOM_WORKSPACE}"
+                }
+            }
+
+            steps {
+                step(
+                    [
+                        $class: 'XrayImportBuilder',
+                        endpointName: '/multipart',
+                        // JARVIS
+                        //importFilePath: '$WORKSPACE\\RESULTS\\JIRA_Results\\JIRA_Tests_JSON.json',
+                        importFilePath: 'JIRA_Tests_JSON.json',
+                        importInParallel: 'false',
+                        // JARVIS
+                        //importInfo: '$WORKSPACE\\RESULTS\\JIRA_Results\\JIRA_Info_JSON.json',
+                        importInfo: 'JIRA_Info_JSON.json',
+                        inputInfoSwitcher: 'filePath',
+                        serverInstance: 'CLOUD-482e318d-9fc6-4be6-9089-2646e78fcac3',
+                        credentialId: 'Jira-XRay-Key'
+                    ]
+                )
+            }
+        }*/
+	    
+	stage('Quality Gate'){
+	    agent {
+                node {
+                    //label "${params.AgentName}"
+		    label "${NODE_NAME}"
+                    customWorkspace "${COSTOM_WORKSPACE}"
+                }
+            }
+		
+	    steps {
+		script {
+		    println('Before Quality Gate')
+		    jslCheckQGateForJARVISXrayJSON('2', './cicd/qgatethresholds/threshold.json', 'JIRA_Tests_JSON.json')
+		    println('After Quality Gate')
+		}
+		/*script {
+		/ * Contract validation gate * /
+		/ * jslQualityGate() * /
+		println('Placeholder for Quality Gate')
+		}*/
+	    }
+        }
+
+        /* stage('Coverage'){
+        steps {
+        script {
+        / * Contract validation gate * /
+        unstash name: "TARGETSUREFIREDIR"
+        unstash name: "TARGETSITEDIR"
+        jslAKQualityGateCodeCoverage('./cicd/conf/sonarqube/sonar-project.properties')
+        //jslQualityGateCodeCoverage('./cicd/conf/sonarqube/sonar-project.properties')
+        }
+        }
+        } */
+
+        /* stage('Sonarqube'){
+        agent {
+        dockerfile {
+        filename 'Dockerfile'
+        dir 'cicd/docker/sonarqube'
+        label 'Docker-enabled'
+        }
+        }
+        steps {
+        script {
+        unstash name: "TARGETSUREFIREDIR"
+        unstash name: "TARGETSITEDIR"
+        / * Contract validation gate * /
+        jslSonarQubeStaticAnalysis('./cicd/conf/sonarqube/sonar-project.properties')
+        }
+        }
+        } */
+
+        /* stage('Quality Gate'){
+        /* agent {
+        dockerfile {
+        filename 'Dockerfile'
+        dir 'cicd/docker/sonarqube'
+        label 'Docker-enabled'
+        }
+        } * /
+        steps {
+        script {
+        / * Contract validation gate * /
+        / * jslQualityGate() * /
+        println('Placeholder for Quality Gate')
+        }
+        }
+        } */
+
+        /* stage('E2E Testing') {
+        /* agent {
+        dockerfile {
+        filename 'Dockerfile'
+        dir 'cicd/docker/mvn'
+        label 'Docker-enabled'
+        }
+        } * /
+        steps {
+        script {
+        println('Placeholder for E2E tests')
+        }
+        }
+        } */
+
+    } //stages
+
+    post {
+        /*
+        https://www.jenkins.io/doc/book/pipeline/syntax/#post
+        Always post somewhere the watermark:
+        - md5sum of Jenkinsfile
+        - Output of the Jenkinsfile checker output
+         */
+
+        success {
+            /* Contract Validation Gate */
+            jslNotification('success')
+            //cleanWs()
+        }
+        failure {
+            /* Contract Validation Gate */
+            jslNotification('failure')
+            //cleanWs()
+        }
+        unstable {
+            /* Contract Validation Gate */
+            jslNotification('unstable')
+            //cleanWs()
+        }
+    }
+}
